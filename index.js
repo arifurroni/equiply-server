@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 5000;
 
 
 const client = new MongoClient(process.env.MONGODB_URI);
+
 export async function connectToMongoDB() {
   try {
     await client.connect();
@@ -22,6 +23,16 @@ export async function connectToMongoDB() {
     console.dir(err);
   }
 }
+
+const connectedClient = await connectToMongoDB();
+
+const db = connectedClient.db("equiply-db")
+
+const usersCollection = db.collection("users");
+const equipmentsCollection = db.collection("equipments");
+const bookingsCollection = db.collection("bookings");
+
+
 
 
 
