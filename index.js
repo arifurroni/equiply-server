@@ -33,7 +33,19 @@ const equipmentsCollection = db.collection("equipments");
 const bookingsCollection = db.collection("bookings");
 
 
+app.get('/', (req, res) => {
+    res.send('Equiply server is running successfully');
+});
 
+app.get('/equipments', async (req, res) => {
+    try {
+        const result = await equipmentsCollection.find({}).toArray();
+        res.json(result);
+    } catch (err) {
+        console.dir(err);
+        res.status(500).json({ error: 'Failed to fetch equipments' });
+    }
+});
 
 
 app.listen(PORT, () => {
