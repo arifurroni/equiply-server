@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ObjectId } from "mongodb";
 import { getCollection } from "../../config/db.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 
@@ -59,7 +60,12 @@ equipmentsRouter.post("/", async (req, res) => {
 
   // 3. Timestamps are ALWAYS written by the server (overridden if sent).
   const now = new Date().toISOString();
-  const equipment = { ...data, createdAt: now, updatedAt: now };
+  const equipment = {
+    ...data,
+    approvalStatus: "pending",
+    createdAt: now,
+    updatedAt: now,
+  };
 
   const result = await getCollection("equipments").insertOne(equipment);
 
@@ -67,6 +73,45 @@ equipmentsRouter.post("/", async (req, res) => {
     statusCode: 201,
     message: "Equipment added successfully",
     data: { ...equipment, _id: result.insertedId },
+  });
+});
+
+equipmentsRouter.get("/featured", async (req, res) => {
+  const equipments = await getCollection("equipments")
+    .find() //{ approvalStatus: "approved" }
+    .sort({ createdAt: -1 })
+    .limit(6)
+    .toArray();
+
+  return sendSuccess(res, {
+    message: "Featured equipment fetched successfully",
+    data: equipments,
+  });
+});
+
+equipmentsRouter.get("/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid equipment ID.",
+    });
+  }
+
+  const equipment = await getCollection("equipments").findOne({
+    _id: new ObjectId(req.params.id),
+    approvalStatus: "approved",
+  });
+
+  if (!equipment) {
+    return sendError(res, {
+      statusCode: 404,
+      message: "Approved equipment not found.",
+    });
+  }
+
+  return sendSuccess(res, {
+    message: "Equipment fetched successfully",
+    data: equipment,
   });
 });
 
