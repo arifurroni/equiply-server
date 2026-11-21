@@ -62,7 +62,6 @@ equipmentsRouter.post("/", async (req, res) => {
   const now = new Date().toISOString();
   const equipment = {
     ...data,
-    approvalStatus: "pending",
     createdAt: now,
     updatedAt: now,
   };
@@ -78,7 +77,7 @@ equipmentsRouter.post("/", async (req, res) => {
 
 equipmentsRouter.get("/featured", async (req, res) => {
   const equipments = await getCollection("equipments")
-    .find() //{ approvalStatus: "approved" }
+    .find({})
     .sort({ createdAt: -1 })
     .limit(6)
     .toArray();
@@ -99,13 +98,12 @@ equipmentsRouter.get("/:id", async (req, res) => {
 
   const equipment = await getCollection("equipments").findOne({
     _id: new ObjectId(req.params.id),
-    approvalStatus: "approved",
   });
 
   if (!equipment) {
     return sendError(res, {
       statusCode: 404,
-      message: "Approved equipment not found.",
+      message: "Equipment not found.",
     });
   }
 
@@ -116,7 +114,127 @@ equipmentsRouter.get("/:id", async (req, res) => {
 });
 
 equipmentsRouter.get("/", async (req, res) => {
-  const equipments = await getCollection("equipments").find({}).toArray();
+  const query = req.query ?? {};
+  const queryFields = [
+    "search",
+    "category",
+    "rentalType",
+    "minPrice",
+    "maxPrice",
+    "availability",
+    "sortBy",
+  ];
+
+  if (
+    queryFields.some(
+      (field) => query[field] !== undefined && typeof query[field] !== "string"
+    )
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Equipment filters must be single values.",
+    });
+  }
+
+  const search = (query.search ?? "").trim();
+  const category = (query.category ?? "").trim();
+  const rentalType = (query.rentalType ?? "").trim();
+  const minPriceText = (query.minPrice ?? "").trim();
+  const maxPriceText = (query.maxPrice ?? "").trim();
+  const availability = (query.availability ?? "").trim();
+  const sortBy = (query.sortBy ?? "").trim();
+
+  if (search.length > 100) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Search text must be 100 characters or fewer.",
+    });
+  }
+
+  if (rentalType && !["daily", "weekly", "monthly"].includes(rentalType)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid rental type.",
+    });
+  }
+
+  if (availability && !["available", "unavailable"].includes(availability)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid availability filter.",
+    });
+  }
+
+  const minPrice = minPriceText ? Number(minPriceText) : null;
+  const maxPrice = maxPriceText ? Number(maxPriceText) : null;
+
+  if (
+    (minPrice !== null && (!Number.isFinite(minPrice) || minPrice < 0)) ||
+    (maxPrice !== null && (!Number.isFinite(maxPrice) || maxPrice < 0))
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Price filters must be non-negative numbers.",
+    });
+  }
+
+  if (
+    minPrice !== null &&
+    maxPrice !== null &&
+    minPrice > maxPrice
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Minimum price cannot exceed maximum price.",
+    });
+  }
+
+  const sortOptions = {
+    recent: { createdAt: -1, _id: -1 },
+    "price-asc": { rentalPrice: 1, _id: 1 },
+    "price-desc": { rentalPrice: -1, _id: 1 },
+  };
+  const selectedSort = sortBy || "recent";
+
+  if (!Object.hasOwn(sortOptions, selectedSort)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid sort option.",
+    });
+  }
+
+  const filter = {};
+
+  if (search) {
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { name: { $regex: escapedSearch, $options: "i" } },
+      { location: { $regex: escapedSearch, $options: "i" } },
+    ];
+  }
+
+  if (category) {
+    filter.category = category;
+  }
+
+  if (rentalType) {
+    filter.rentalType = rentalType;
+  }
+
+  if (minPrice !== null || maxPrice !== null) {
+    filter.rentalPrice = {};
+    if (minPrice !== null) filter.rentalPrice.$gte = minPrice;
+    if (maxPrice !== null) filter.rentalPrice.$lte = maxPrice;
+  }
+
+  if (availability) {
+    filter.status = availability === "available" ? "active" : "inactive";
+  }
+
+  const equipmentsQuery = getCollection("equipments").find(filter);
+  const equipments = Object.keys(query).length
+    ? await equipmentsQuery.sort(sortOptions[selectedSort]).toArray()
+    : await equipmentsQuery.toArray();
 
   return sendSuccess(res, {
     message: "Equipments fetched successfully",
