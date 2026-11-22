@@ -12,6 +12,7 @@ import { sendError, sendSuccess } from "../../utils/response.js";
 
 const bookingsRouter = Router();
 const requireCustomer = requireRole("customer");
+const requireAdmin = requireRole("admin");
 const BILLING_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 const CURRENCY = "usd";
 const CHECKOUT_WINDOW_SECONDS = 35 * 60;
@@ -420,12 +421,92 @@ bookingsRouter.get(
         ...booking,
         _id: booking._id.toString(),
         equipmentId: booking.equipmentId.toString(),
-        currency: booking.currency || CURRENCY,
+        currency:
+          typeof booking.currency === "string" &&
+          /^[a-z]{3}$/i.test(booking.currency)
+            ? booking.currency
+            : CURRENCY,
         bookingStatus: booking.bookingStatus || "pending_payment",
       })),
     });
   }
 );
+
+bookingsRouter.get("/admin", requireAdmin, async (req, res) => {
+  const bookings = await getCollection("bookings")
+    .find({})
+    .sort({ createdAt: -1 })
+    .toArray();
+  const userIds = [
+    ...new Set(
+      bookings.flatMap((booking) =>
+        [booking.customerId, booking.ownerId]
+          .filter((id) => id !== undefined && id !== null)
+          .map(String)
+      )
+    ),
+  ];
+  const lookupIds = userIds.flatMap((id) =>
+    ObjectId.isValid(id) ? [id, new ObjectId(id)] : [id]
+  );
+  const users = lookupIds.length
+    ? await getCollection("user")
+        .find(
+          { _id: { $in: lookupIds } },
+          { projection: { name: 1, email: 1 } }
+        )
+        .toArray()
+    : [];
+  const usersById = new Map(
+    users.map((user) => [
+      String(user._id),
+      {
+        id: String(user._id),
+        name: typeof user.name === "string" ? user.name : "Equiply user",
+        email: typeof user.email === "string" ? user.email : "",
+      },
+    ])
+  );
+
+  const userSummary = (id, fallback) =>
+    usersById.get(String(id ?? "")) ?? {
+      id: id === undefined || id === null ? "" : String(id),
+      name: fallback,
+      email: "",
+    };
+
+  return sendSuccess(res, {
+    message: "Rental bookings retrieved.",
+    data: bookings.map((booking) => ({
+      id: booking._id.toString(),
+      customer: userSummary(booking.customerId, "Unknown customer"),
+      owner: userSummary(booking.ownerId, "Unknown owner"),
+      equipmentId: String(booking.equipmentId ?? ""),
+      equipmentName:
+        typeof booking.equipmentName === "string"
+          ? booking.equipmentName
+          : "Equipment listing",
+      startDate: booking.startDate ?? "",
+      endDate: booking.endDate ?? "",
+      rentalDays: Number.isFinite(booking.rentalDays)
+        ? booking.rentalDays
+        : null,
+      quantity: Number.isInteger(booking.quantity) ? booking.quantity : null,
+      createdAt:
+        booking.createdAt instanceof Date
+          ? booking.createdAt.toISOString()
+          : String(booking.createdAt ?? ""),
+      totalAmount: Number.isFinite(booking.totalAmount)
+        ? booking.totalAmount
+        : Number.isFinite(booking.amountInCents)
+          ? booking.amountInCents / 100
+          : null,
+      currency: booking.currency || CURRENCY,
+      paymentStatus: booking.paymentStatus || "pending",
+      bookingStatus: booking.bookingStatus || "pending_payment",
+    })),
+  });
+});
 
 bookingsRouter.get(
   "/session/:sessionId",
