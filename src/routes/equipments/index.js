@@ -373,6 +373,10 @@ equipmentsRouter.delete("/admin/:id", requireAdmin, async (req, res) => {
     });
   }
 
+  await getCollection("favorites").deleteMany({
+    equipmentId: new ObjectId(id),
+  });
+
   return sendSuccess(res, {
     message: "Equipment listing deleted successfully.",
     data: { id },
@@ -398,9 +402,35 @@ equipmentsRouter.get("/:id", async (req, res) => {
     });
   }
 
+  let owner = null;
+  const ownerId = String(equipment.ownerId ?? "");
+  if (ownerId) {
+    const ownerFilter = ObjectId.isValid(ownerId)
+      ? { $or: [{ _id: ownerId }, { _id: new ObjectId(ownerId) }] }
+      : { _id: ownerId };
+    const ownerDocument = await getCollection("user").findOne(ownerFilter, {
+      projection: { name: 1, image: 1, location: 1 },
+    });
+
+    if (ownerDocument) {
+      owner = {
+        name:
+          typeof ownerDocument.name === "string"
+            ? ownerDocument.name
+            : "Equipment owner",
+        image:
+          typeof ownerDocument.image === "string" ? ownerDocument.image : null,
+        location:
+          typeof ownerDocument.location === "string"
+            ? ownerDocument.location
+            : null,
+      };
+    }
+  }
+
   return sendSuccess(res, {
     message: "Equipment fetched successfully",
-    data: equipment,
+    data: { ...equipment, owner },
   });
 });
 

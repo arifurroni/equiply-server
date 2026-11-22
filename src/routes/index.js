@@ -2,6 +2,7 @@ import { Router } from "express";
 import usersRouter from "./users/index.js";
 import equipmentsRouter from "./equipments/index.js";
 import bookingsRouter from "./bookings/index.js";
+import favoritesRouter from "./favorites/index.js";
 
 /**
  * All API routes live under /
@@ -17,5 +18,6 @@ const routes = Router();
 routes.use("/users", usersRouter);
 routes.use("/equipments", equipmentsRouter);
 routes.use("/bookings", bookingsRouter);
+routes.use("/favorites", favoritesRouter);
 
 export default routes;
