@@ -1,13 +1,169 @@
 import { Router } from "express";
+import { getCollection } from "../../config/db.js";
+import { sendSuccess, sendError } from "../../utils/response.js";
 
-/**
- * User routes (signup, profile, role management, ...)
- * will be added here in a later phase.
- */
 const usersRouter = Router();
 
-usersRouter.get("/", (req, res) => {
-    res.send({Message: "Users retrieved successfully!"});
+const ROLES = ["customer", "owner", "admin"];
+const LOCATIONS = ["Dhaka", "Chittagong", "Khulna", "Sylhet"];
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+
+async function requireAdmin(req, res, next) {
+  const cookie = req.get("cookie");
+  if (!cookie) {
+    return sendError(res, {
+      statusCode: 401,
+      message: "Authentication is required.",
+    });
+  }
+
+  let authResponse;
+  try {
+    authResponse = await fetch(`${CLIENT_URL}/api/auth/get-session`, {
+      headers: { cookie, accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (error) {
+    console.error("User admin authorization check failed:", error);
+    return sendError(res, {
+      statusCode: 503,
+      message: "Unable to verify your session. Please try again.",
+    });
+  }
+
+  if (!authResponse.ok) {
+    return sendError(res, {
+      statusCode: authResponse.status === 401 ? 401 : 503,
+      message:
+        authResponse.status === 401
+          ? "Your session is invalid or expired."
+          : "Unable to verify your session. Please try again.",
+    });
+  }
+
+  let session;
+  try {
+    session = await authResponse.json();
+  } catch (error) {
+    console.error("User admin authorization response was invalid:", error);
+    return sendError(res, {
+      statusCode: 503,
+      message: "Unable to verify your session. Please try again.",
+    });
+  }
+
+  if (!session?.user) {
+    return sendError(res, {
+      statusCode: 401,
+      message: "Authentication is required.",
+    });
+  }
+
+  if (session.user.role !== "admin") {
+    return sendError(res, {
+      statusCode: 403,
+      message: "Only admins can manage users.",
+    });
+  }
+
+  req.adminUserId = session.user.id;
+  next();
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+usersRouter.get("/", requireAdmin, async (req, res) => {
+  const users = await getCollection("user")
+    .find(
+      {},
+      { projection: { name: 1, email: 1, role: 1, location: 1, createdAt: 1 } }
+    )
+    .sort({ name: 1, _id: 1 })
+    .toArray();
+
+  const data = users.map((user) => ({
+    id: String(user._id),
+    name: typeof user.name === "string" ? user.name : "Equiply user",
+    email: typeof user.email === "string" ? user.email : "",
+    role: ROLES.includes(user.role) ? user.role : "customer",
+    location: LOCATIONS.includes(user.location) ? user.location : null,
+    createdAt: toIsoDate(user.createdAt),
+  }));
+
+  return sendSuccess(res, {
+    message: "Users retrieved successfully.",
+    data,
+  });
+});
+
+usersRouter.patch("/:id", requireAdmin, async (req, res) => {
+  const userId = req.params.id;
+  const updates = req.body;
+
+  if (
+    typeof userId !== "string" ||
+    !userId.trim() ||
+    userId.length > 128 ||
+    !updates ||
+    typeof updates !== "object" ||
+    Array.isArray(updates)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "A valid user and update are required.",
+    });
+  }
+
+  const fields = Object.keys(updates);
+  if (
+    fields.length === 0 ||
+    fields.some((field) => field !== "role" && field !== "location")
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Only role and location can be updated.",
+    });
+  }
+
+  if (Object.hasOwn(updates, "role") && !ROLES.includes(updates.role)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Select a valid role.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "location") &&
+    !LOCATIONS.includes(updates.location)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Select a valid location.",
+    });
+  }
+
+  const result = await getCollection("user").updateOne(
+    { _id: userId },
+    { $set: updates }
+  );
+
+  if (result.matchedCount === 0) {
+    return sendError(res, {
+      statusCode: 404,
+      message: "User account was not found.",
+    });
+  }
+
+  return sendSuccess(res, {
+    message: "User updated successfully.",
+    data: { id: userId, ...updates },
+  });
 });
 
 export default usersRouter;
