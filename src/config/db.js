@@ -45,6 +45,30 @@ export function getCollection(name) {
   return getDb().collection(name);
 }
 
+export async function withTransaction(operation) {
+  if (!client) {
+    throw new Error("MongoDB is not connected yet. Call connectToMongoDB() first.");
+  }
+
+  const session = client.startSession();
+  try {
+    let result;
+    await session.withTransaction(
+      async () => {
+        result = await operation(session);
+      },
+      {
+        readPreference: "primary",
+        readConcern: { level: "snapshot" },
+        writeConcern: { w: "majority" },
+      }
+    );
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
 /** Closes the connection cleanly on shutdown. */
 export async function closeMongoDB() {
   if (!client) return;

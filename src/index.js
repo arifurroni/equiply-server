@@ -7,6 +7,8 @@ import routes from "./routes/index.js";
 import notFound from "./middleware/notFound.js";
 import errorHandler from "./middleware/errorHandler.js";
 import { sendSuccess } from "./utils/response.js";
+import stripeWebhook from "./routes/webhooks/stripe.js";
+import { ensureBookingIndexes } from "./services/bookingLifecycle.js";
 
 const app = express();
 
@@ -19,6 +21,11 @@ app.use(
     origin: CLIENT_URL, // only the frontend may call this API
     credentials: true,
   })
+);
+app.post(
+  "/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  stripeWebhook
 );
 app.use(express.json()); // parse JSON request bodies
 
@@ -40,6 +47,7 @@ app.use(errorHandler);
 // ---------- Start server ----------
 async function startServer() {
   await connectToMongoDB();
+  await ensureBookingIndexes();
 
   const server = app.listen(PORT, () => {
     console.log(`Server is running successfully on port: ${PORT}`);
@@ -59,4 +67,7 @@ async function startServer() {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Server startup failed:", error);
+  process.exit(1);
+});
