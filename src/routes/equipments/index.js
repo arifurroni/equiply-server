@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { ObjectId } from "mongodb";
 import { getCollection } from "../../config/db.js";
+import requireAdmin from "../../middleware/requireAdmin.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 
 /**
@@ -25,6 +26,25 @@ const REQUIRED_FIELDS = [
   "rentalTerms",
   "status",
   "ownerId",
+];
+const APPROVAL_STATUSES = ["pending", "approved", "rejected"];
+const RENTAL_TYPES = ["daily", "weekly", "monthly"];
+const EQUIPMENT_CONDITIONS = ["new", "like-new", "good", "fair", "poor"];
+const EQUIPMENT_STATUSES = ["active", "inactive"];
+const ADMIN_EDITABLE_FIELDS = [
+  "name",
+  "description",
+  "category",
+  "location",
+  "rentalPrice",
+  "rentalType",
+  "availableQuantity",
+  "condition",
+  "brand",
+  "model",
+  "image",
+  "rentalTerms",
+  "status",
 ];
 
 equipmentsRouter.post("/", async (req, res) => {
@@ -62,6 +82,7 @@ equipmentsRouter.post("/", async (req, res) => {
   const now = new Date().toISOString();
   const equipment = {
     ...data,
+    approvalStatus: "pending",
     createdAt: now,
     updatedAt: now,
   };
@@ -85,6 +106,276 @@ equipmentsRouter.get("/featured", async (req, res) => {
   return sendSuccess(res, {
     message: "Featured equipment fetched successfully",
     data: equipments,
+  });
+});
+
+equipmentsRouter.get("/admin", requireAdmin, async (req, res) => {
+  const equipments = await getCollection("equipments")
+    .find({})
+    .sort({ createdAt: -1, _id: -1 })
+    .toArray();
+
+  const data = equipments.map((equipment) => ({
+    ...equipment,
+    _id: String(equipment._id),
+    approvalStatus: APPROVAL_STATUSES.includes(equipment.approvalStatus)
+      ? equipment.approvalStatus
+      : "pending",
+  }));
+
+  return sendSuccess(res, {
+    message: "Equipment listings retrieved successfully.",
+    data,
+  });
+});
+
+equipmentsRouter.patch(
+  "/admin/:id/approval",
+  requireAdmin,
+  async (req, res) => {
+    const { id } = req.params;
+    const { approvalStatus } = req.body ?? {};
+
+    if (!ObjectId.isValid(id)) {
+      return sendError(res, {
+        statusCode: 400,
+        message: "Invalid equipment ID.",
+      });
+    }
+
+    if (
+      Object.keys(req.body ?? {}).length !== 1 ||
+      !APPROVAL_STATUSES.includes(approvalStatus)
+    ) {
+      return sendError(res, {
+        statusCode: 400,
+        message: "Select a valid approval status.",
+      });
+    }
+
+    const result = await getCollection("equipments").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          approvalStatus,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return sendError(res, {
+        statusCode: 404,
+        message: "Equipment listing was not found.",
+      });
+    }
+
+    return sendSuccess(res, {
+      message: `Equipment ${approvalStatus}.`,
+      data: { id, approvalStatus },
+    });
+  }
+);
+
+equipmentsRouter.patch("/admin/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid equipment ID.",
+    });
+  }
+
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Equipment updates must be an object.",
+    });
+  }
+
+  const fields = Object.keys(updates);
+  if (
+    fields.length === 0 ||
+    fields.some((field) => !ADMIN_EDITABLE_FIELDS.includes(field))
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Only equipment listing fields can be updated.",
+    });
+  }
+
+  const requiredTextFields = [
+    "name",
+    "description",
+    "category",
+    "location",
+    "condition",
+    "brand",
+    "model",
+    "image",
+    "rentalTerms",
+  ];
+
+  for (const field of requiredTextFields) {
+    if (
+      Object.hasOwn(updates, field) &&
+      (typeof updates[field] !== "string" ||
+        !updates[field].trim() ||
+        updates[field].length > 5000)
+    ) {
+      return sendError(res, {
+        statusCode: 400,
+        message: `${field} must be a non-empty string of at most 5000 characters.`,
+      });
+    }
+  }
+
+  for (const field of ["category", "location", "brand", "model"]) {
+    if (typeof updates[field] === "string" && updates[field].length > 120) {
+      return sendError(res, {
+        statusCode: 400,
+        message: `${field} must be 120 characters or fewer.`,
+      });
+    }
+  }
+
+  if (
+    typeof updates.name === "string" &&
+    (updates.name.trim().length < 2 || updates.name.length > 120)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Equipment name must be between 2 and 120 characters.",
+    });
+  }
+
+  if (
+    typeof updates.description === "string" &&
+    (updates.description.trim().length < 10 ||
+      updates.description.length > 5000)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Description must be between 10 and 5000 characters.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "rentalPrice") &&
+    (typeof updates.rentalPrice !== "number" ||
+      !Number.isFinite(updates.rentalPrice) ||
+      updates.rentalPrice < 1)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Rental price must be at least 1.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "availableQuantity") &&
+    (!Number.isInteger(updates.availableQuantity) ||
+      updates.availableQuantity < 1)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Available quantity must be a whole number of at least 1.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "rentalType") &&
+    !RENTAL_TYPES.includes(updates.rentalType)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Select a valid rental type.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "condition") &&
+    !EQUIPMENT_CONDITIONS.includes(updates.condition)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Select a valid equipment condition.",
+    });
+  }
+
+  if (
+    Object.hasOwn(updates, "status") &&
+    !EQUIPMENT_STATUSES.includes(updates.status)
+  ) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Select a valid availability status.",
+    });
+  }
+
+  if (Object.hasOwn(updates, "image")) {
+    try {
+      const imageUrl = new URL(updates.image);
+      if (!["http:", "https:"].includes(imageUrl.protocol)) {
+        throw new Error("Unsupported image URL protocol.");
+      }
+    } catch {
+      return sendError(res, {
+        statusCode: 400,
+        message: "Image must be a valid HTTP or HTTPS URL.",
+      });
+    }
+  }
+
+  const result = await getCollection("equipments").updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
+
+  if (result.matchedCount === 0) {
+    return sendError(res, {
+      statusCode: 404,
+      message: "Equipment listing was not found.",
+    });
+  }
+
+  return sendSuccess(res, {
+    message: "Equipment listing updated successfully.",
+    data: { id, ...updates },
+  });
+});
+
+equipmentsRouter.delete("/admin/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return sendError(res, {
+      statusCode: 400,
+      message: "Invalid equipment ID.",
+    });
+  }
+
+  const result = await getCollection("equipments").deleteOne({
+    _id: new ObjectId(id),
+  });
+
+  if (result.deletedCount === 0) {
+    return sendError(res, {
+      statusCode: 404,
+      message: "Equipment listing was not found.",
+    });
+  }
+
+  return sendSuccess(res, {
+    message: "Equipment listing deleted successfully.",
+    data: { id },
   });
 });
 

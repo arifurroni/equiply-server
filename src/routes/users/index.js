@@ -1,75 +1,12 @@
 import { Router } from "express";
 import { getCollection } from "../../config/db.js";
+import requireAdmin from "../../middleware/requireAdmin.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 
 const usersRouter = Router();
 
 const ROLES = ["customer", "owner", "admin"];
 const LOCATIONS = ["Dhaka", "Chittagong", "Khulna", "Sylhet"];
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
-
-async function requireAdmin(req, res, next) {
-  const cookie = req.get("cookie");
-  if (!cookie) {
-    return sendError(res, {
-      statusCode: 401,
-      message: "Authentication is required.",
-    });
-  }
-
-  let authResponse;
-  try {
-    authResponse = await fetch(`${CLIENT_URL}/api/auth/get-session`, {
-      headers: { cookie, accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (error) {
-    console.error("User admin authorization check failed:", error);
-    return sendError(res, {
-      statusCode: 503,
-      message: "Unable to verify your session. Please try again.",
-    });
-  }
-
-  if (!authResponse.ok) {
-    return sendError(res, {
-      statusCode: authResponse.status === 401 ? 401 : 503,
-      message:
-        authResponse.status === 401
-          ? "Your session is invalid or expired."
-          : "Unable to verify your session. Please try again.",
-    });
-  }
-
-  let session;
-  try {
-    session = await authResponse.json();
-  } catch (error) {
-    console.error("User admin authorization response was invalid:", error);
-    return sendError(res, {
-      statusCode: 503,
-      message: "Unable to verify your session. Please try again.",
-    });
-  }
-
-  if (!session?.user) {
-    return sendError(res, {
-      statusCode: 401,
-      message: "Authentication is required.",
-    });
-  }
-
-  if (session.user.role !== "admin") {
-    return sendError(res, {
-      statusCode: 403,
-      message: "Only admins can manage users.",
-    });
-  }
-
-  req.adminUserId = session.user.id;
-  next();
-}
 
 function toIsoDate(value) {
   if (!value) return null;
