@@ -55,19 +55,20 @@ async function startServer() {
   });
 
   // Close the server + database cleanly on Ctrl+C / shutdown.
-  const shutdown = (signal) => {
-    console.log(`\n${signal} received. Shutting down...`);
-    server.close(async () => {
-      await closeMongoDB();
-      process.exit(0);
-    });
-  };
+  // const shutdown = (signal) => {
+  //   console.log(`\n${signal} received. Shutting down...`);
+  //   server.close(async () => {
+  //     await closeMongoDB();
+  //     process.exit(0);
+  //   });
+  // };
 
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // process.on("SIGINT", () => shutdown("SIGINT"));
+  // process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 startServer().catch((error) => {
   console.error("Server startup failed:", error);
   process.exit(1);
+
 });
