@@ -12,6 +12,7 @@ import { sendError, sendSuccess } from "../../utils/response.js";
 
 const bookingsRouter = Router();
 const requireCustomer = requireRole("customer");
+const requireOwner = requireRole("owner");
 const requireAdmin = requireRole("admin");
 const BILLING_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 const CURRENCY = "usd";
@@ -504,6 +505,96 @@ bookingsRouter.get("/admin", requireAdmin, async (req, res) => {
           ? booking.amountInCents / 100
           : null,
       currency: booking.currency || CURRENCY,
+      paymentStatus: booking.paymentStatus || "pending",
+      bookingStatus: booking.bookingStatus || "pending_payment",
+    })),
+  });
+});
+
+bookingsRouter.get("/owner", requireOwner, async (req, res) => {
+  const ownerId = String(req.authUserId);
+  const ownerIds = ObjectId.isValid(ownerId)
+    ? [ownerId, new ObjectId(ownerId)]
+    : [ownerId];
+  const bookings = await getCollection("bookings")
+    .find({ ownerId: { $in: ownerIds } })
+    .sort({ createdAt: -1 })
+    .project({
+      customerId: 1,
+      equipmentId: 1,
+      equipmentName: 1,
+      startDate: 1,
+      endDate: 1,
+      rentalDays: 1,
+      quantity: 1,
+      totalAmount: 1,
+      amountInCents: 1,
+      currency: 1,
+      paymentStatus: 1,
+      bookingStatus: 1,
+      createdAt: 1,
+    })
+    .toArray();
+  const customerIds = [
+    ...new Set(
+      bookings
+        .map((booking) => booking.customerId)
+        .filter((id) => id !== undefined && id !== null)
+        .map(String)
+    ),
+  ];
+  const customerLookupIds = customerIds.flatMap((id) =>
+    ObjectId.isValid(id) ? [id, new ObjectId(id)] : [id]
+  );
+  const customers = customerLookupIds.length
+    ? await getCollection("user")
+        .find(
+          { _id: { $in: customerLookupIds } },
+          { projection: { name: 1, email: 1 } }
+        )
+        .toArray()
+    : [];
+  const customersById = new Map(
+    customers.map((customer) => [
+      String(customer._id),
+      {
+        name:
+          typeof customer.name === "string" ? customer.name : "Equiply customer",
+        email: typeof customer.email === "string" ? customer.email : "",
+      },
+    ])
+  );
+
+  return sendSuccess(res, {
+    message: "Owner rental bookings retrieved.",
+    data: bookings.map((booking) => ({
+      id: booking._id.toString(),
+      customer:
+        customersById.get(String(booking.customerId ?? "")) ?? {
+          name: "Unknown customer",
+          email: "",
+        },
+      equipmentId: String(booking.equipmentId ?? ""),
+      equipmentName:
+        typeof booking.equipmentName === "string"
+          ? booking.equipmentName
+          : "Equipment listing",
+      startDate: booking.startDate ?? "",
+      endDate: booking.endDate ?? "",
+      rentalDays: Number.isFinite(booking.rentalDays)
+        ? booking.rentalDays
+        : null,
+      quantity: Number.isInteger(booking.quantity) ? booking.quantity : null,
+      totalAmount: Number.isFinite(booking.totalAmount)
+        ? booking.totalAmount
+        : Number.isFinite(booking.amountInCents)
+          ? booking.amountInCents / 100
+          : null,
+      currency:
+        typeof booking.currency === "string" &&
+        /^[a-z]{3}$/i.test(booking.currency)
+          ? booking.currency
+          : CURRENCY,
       paymentStatus: booking.paymentStatus || "pending",
       bookingStatus: booking.bookingStatus || "pending_payment",
     })),
