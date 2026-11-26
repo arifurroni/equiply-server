@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ObjectId } from "mongodb";
 import { getCollection } from "../../config/db.js";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
@@ -85,8 +86,14 @@ usersRouter.patch("/:id", requireAdmin, async (req, res) => {
     });
   }
 
+  // Better Auth stores user _id as an ObjectId, but the id arrives here as a
+  // string from the URL. Match both forms so the update always finds the account.
+  const idFilter = ObjectId.isValid(userId)
+    ? { $in: [userId, new ObjectId(userId)] }
+    : userId;
+
   const result = await getCollection("user").updateOne(
-    { _id: userId },
+    { _id: idFilter },
     { $set: updates }
   );
 
