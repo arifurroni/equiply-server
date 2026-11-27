@@ -298,9 +298,7 @@ bookingsRouter.post("/checkout", requireCustomer, async (req, res) => {
     checkoutSession = await stripe.checkout.sessions.create(
       {
         mode: "payment",
-        automatic_payment_methods: {
-    enabled: true,
-  },
+        allowed_payment_method_types: ["card"],
         line_items: [
           {
             price_data: {
